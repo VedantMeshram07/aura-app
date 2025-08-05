@@ -1,11 +1,23 @@
 from flask import Flask, request, jsonify
 import firebase_admin
 from firebase_admin import credentials, firestore
+import json 
 
 app = Flask(__name__)
 
 # Initialize Firebase Admin SDK
-cred = credentials.Certificate("path/to/your/firebase-service-account.json")
+try:
+    # Running locally, use the JSON file
+    cred = credentials.Certificate("serviceAccountKey.json")
+except FileNotFoundError:
+    # Running on Render, use the environment variable
+    firebase_service_account_str = os.getenv('FIREBASE_SERVICE_ACCOUNT_JSON')
+    if firebase_service_account_str is None:
+        raise ValueError("FIREBASE_SERVICE_ACCOUNT_JSON environment variable not set.")
+
+    firebase_service_account_dict = json.loads(firebase_service_account_str)
+    cred = credentials.Certificate(firebase_service_account_dict)
+
 firebase_admin.initialize_app(cred)
 db = firestore.client()
 
