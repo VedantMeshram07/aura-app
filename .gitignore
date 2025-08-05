@@ -1,0 +1,12 @@
+# Python virtual environment
+backend/venv/
+
+# Python cache
+backend/__pycache__/
+
+# Environment variables and secrets
+backend/.env
+backend/serviceAccountKey.json
+
+# IDE configuration files
+.vscode/
