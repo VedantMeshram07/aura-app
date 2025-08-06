@@ -1,10 +1,10 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template
 import firebase_admin
 from firebase_admin import credentials, firestore
 import json
 import os
 
-app = Flask(__name__)
+app = Flask(__name__, template_folder="../templates")  # template folder is one level up if needed
 
 # ✅ Initialize Firebase Admin SDK
 try:
@@ -26,7 +26,7 @@ db = firestore.client()
 def index():
     return "Welcome to Aura Backend! Use /kai/screening to start the screening."
 
-# 🧠 Full PHQ-9 Screening questions
+# 🎯 Screening questions
 SCREENING_QUESTIONS = [
     {"id": "q1", "text": "Over the last 2 weeks, how often have you been bothered by having little interest or pleasure in doing things?"},
     {"id": "q2", "text": "Over the last 2 weeks, how often have you been bothered by feeling down, depressed, or hopeless?"},
@@ -39,15 +39,14 @@ SCREENING_QUESTIONS = [
     {"id": "q9", "text": "Thoughts that you would be better off dead or of hurting yourself in some way?"}
 ]
 
-# 🎯 Answer options
 RESPONSE_OPTIONS = ["Not at all", "Several days", "More than half the days", "Nearly every day"]
 
-# 🔁 Screening endpoint
+# 🔁 PHQ-9 Screening Endpoint
 @app.route('/kai/screening', methods=['POST'])
 def handle_screening():
     data = request.json
     user_id = data.get('userId')
-    answer_index = data.get('answerIndex')  # 0 to 3
+    answer_index = data.get('answerIndex')  # Optional
 
     if not user_id:
         return jsonify({"error": "userId is required"}), 400
@@ -63,22 +62,22 @@ def handle_screening():
         user_data = user_doc.to_dict()
         current_question_index = user_data.get('currentQuestionIndex', 0)
 
-    # ✅ Save answer to current question (before increment)
+    # Save previous answer (if sent)
     if answer_index is not None and 0 <= current_question_index < len(SCREENING_QUESTIONS):
         question_id = SCREENING_QUESTIONS[current_question_index]['id']
         user_ref.update({f'scores.{question_id}': answer_index})
 
-    # ✅ Move to next question
+    # Move to next question
     current_question_index += 1
 
-    # ✅ Check if screening is complete
+    # Completed screening
     if current_question_index >= len(SCREENING_QUESTIONS):
         user_ref.update({'currentQuestionIndex': current_question_index})
         return jsonify({
             "message": "Thank you for completing the screening. We will now connect you with Elara."
         })
 
-    # ✅ Send next question
+    # Next question
     next_question = SCREENING_QUESTIONS[current_question_index]
     user_ref.update({'currentQuestionIndex': current_question_index})
 
@@ -87,7 +86,11 @@ def handle_screening():
         "options": RESPONSE_OPTIONS
     })
 
-# ✅ Gunicorn will look for 'app' – no need to call app.run()
-# Local run (optional)
+# 🧪 HTML Test Page Route
+@app.route('/test')
+def test_page():
+    return render_template("test.html")
+
+# Local run only
 if __name__ == '__main__':
     app.run(debug=True)
