@@ -11,6 +11,7 @@ kai_bp = Blueprint('kai_agent', __name__)
 def assess_user_metrics(scores):
     """
     ENHANCED 0-100 METRIC SYSTEM: Calculates comprehensive user state with multiple parameters.
+    Missing or None values are treated as 0.
     """
     if not scores:
         return {
@@ -26,8 +27,11 @@ def assess_user_metrics(scores):
             "life_satisfaction": 50
         }
 
-    total_score = sum(scores.values())
-    num_questions = len(scores)
+    # Ensure all score values are numeric (default to 0 if None or missing)
+    safe_scores = {k: (v if isinstance(v, (int, float)) else 0) for k, v in scores.items()}
+
+    total_score = sum(safe_scores.values())
+    num_questions = len(safe_scores)
     
     # Normalize score to a 0-100 scale (max score is num_questions * 3)
     normalized_score = min((total_score / (num_questions * 3)) * 100, 100)
@@ -108,7 +112,6 @@ def can_take_screening(db, user_id):
             time_since_screening = datetime.now() - last_screening
             return time_since_screening >= timedelta(hours=24)
         else:
-            # If last_screening is not a datetime object, allow screening
             return True
             
     except Exception as e:
@@ -148,7 +151,6 @@ def handle_screening():
         return jsonify({"error": "userId and userAge are required"}), 400
     
     try:
-        # Check if user can take screening (24-hour cooldown)
         if not can_take_screening(db, user_id):
             return jsonify({
                 "error": "screening_cooldown",
@@ -174,19 +176,18 @@ def handle_screening():
             index = screening_data.get('currentQuestionIndex', 0)
             if index > 0 and index <= len(questions):
                 previous_question_id = questions[index - 1]['id']
-                screening_session_ref.update({f'scores.{previous_question_id}': data.get('answerIndex')})
+                # Store answer safely (default 0 if None)
+                answer_val = data.get('answerIndex')
+                if answer_val is None:
+                    answer_val = 0
+                screening_session_ref.update({f'scores.{previous_question_id}': answer_val})
 
         if index >= len(questions):
-            # Screening completed
             screening_session_data = screening_session_ref.get()
-            if screening_session_data.exists:
-                final_scores = screening_session_data.to_dict().get('scores', {})
-            else:
-                final_scores = {}
+            final_scores = screening_session_data.to_dict().get('scores', {}) if screening_session_data.exists else {}
             
             new_metrics = assess_user_metrics(final_scores)
             
-            # Update user state with new metrics and timestamp
             user_state_ref.set({
                 "metrics": new_metrics,
                 "last_screening_timestamp": firestore.SERVER_TIMESTAMP,
@@ -196,7 +197,6 @@ def handle_screening():
 
             print(f"Kai assessed and updated user {user_id} metrics: {new_metrics}")
             
-            # Create new session
             try:
                 new_session_ref = db.collection('user_sessions').document()
                 new_session_ref.set({
@@ -208,13 +208,15 @@ def handle_screening():
                 print(f"Error creating session: {e}")
                 session_id = "mock_session_id"
 
-            # Clean up screening session
             try:
                 screening_session_ref.delete()
             except Exception as e:
                 print(f"Error deleting screening session: {e}")
             
-            response_data = {"message": "Thank you for completing your check-in. Let's start a new chat with Elara.", "sessionId": session_id}
+            response_data = {
+                "message": "Thank you for completing your check-in. Let's start a new chat with Elara.",
+                "sessionId": session_id
+            }
         else:
             response_data = {
                 "question": questions[index]['text'], 
@@ -232,7 +234,6 @@ def handle_screening():
 
 @kai_bp.route('/kai/checkScreeningEligibility', methods=['POST'])
 def check_screening_eligibility():
-    """Check if a user can take a new screening (24-hour cooldown)"""
     db = firestore.client()
     data = request.json
     user_id = data.get('userId')
@@ -249,7 +250,6 @@ def check_screening_eligibility():
                 "message": "You can take a screening now."
             })
         else:
-            # Get the last screening timestamp to show when they can take next screening
             user_state_ref = db.collection('user_states').document(user_id)
             user_state_doc = user_state_ref.get()
             

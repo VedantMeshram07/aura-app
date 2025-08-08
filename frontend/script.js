@@ -11,11 +11,11 @@ let currentTheme = 'light';
 
 // Agent configurations
 const AGENTS = {
-  Kai: { name: "Initial Check-in", icon: "fas fa-clipboard-check", type: "Interactive" },
-  Elara: { name: "Conversational Partner", icon: "fas fa-comments", type: "Interactive" },
-  Vero: { name: "Resource Strategist", icon: "fas fa-book-medical", type: "Interactive" },
-  Aegis: { name: "Safety Guardian", icon: "fas fa-shield-alt", type: "System" },
-  Orion: { name: "Silent Analyst", icon: "fas fa-chart-line", type: "System" },
+  Kai: { name: "Kai", icon: "fas fa-clipboard-check", type: "Interactive" },
+  Elara: { name: "Elara", icon: "fas fa-comments", type: "Interactive" },
+  Vero: { name: "Vero", icon: "fas fa-book-medical", type: "Interactive" },
+  Aegis: { name: "Aegis", icon: "fas fa-shield-alt", type: "System" },
+  Orion: { name: "Orion", icon: "fas fa-chart-line", type: "System" },
 };
 
 // DOM elements
