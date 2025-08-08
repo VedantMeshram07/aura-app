@@ -1,204 +1,161 @@
-from flask import Flask, request, jsonify, render_template
+# Aura Mental Health App - Main Application
+import os
+import time
+import threading
+from flask import Flask, render_template, send_from_directory
+from flask_cors import CORS
+from dotenv import load_dotenv
 import firebase_admin
 from firebase_admin import credentials, firestore
-import json
-import os
-from dotenv import load_dotenv
-from ibm_watsonx_ai.foundation_models import ModelInference
-from ibm_watsonx_ai.credentials import Credentials
 
-# Load environment variables
-load_dotenv()
-
-app = Flask(__name__, template_folder="../templates")
-
-# Firebase Initialization
+# Watsonx.ai imports
 try:
-    cred = credentials.Certificate("serviceAccountKey.json")
-except FileNotFoundError:
-    firebase_service_account_str = os.getenv('FIREBASE_SERVICE_ACCOUNT_JSON')
-    if firebase_service_account_str is None:
-        raise ValueError("FIREBASE_SERVICE_ACCOUNT_JSON environment variable not set.")
-    firebase_service_account_dict = json.loads(firebase_service_account_str)
-    cred = credentials.Certificate(firebase_service_account_dict)
+    from ibm_watsonx_ai.foundation_models import ModelInference
+    from ibm_watsonx_ai.metanames import GenTextParamsMetaNames as GenParams
+    from ibm_watsonx_ai.credentials import Credentials
+    WATSONX_AVAILABLE = True
+except ImportError:
+    ModelInference = None
+    Credentials = None
+    WATSONX_AVAILABLE = False
 
-firebase_admin.initialize_app(cred)
-db = firestore.client()
+# Agent blueprint imports
+try:
+    from agents.auth_agent import auth_bp
+    from agents.kai_agent import kai_bp
+    from agents.elara_agent import elara_bp, set_watsonx_model as set_elara_model
+    from agents.vero_agent import vero_bp, set_watsonx_model as set_vero_model
+    from agents.aegis_agent import aegis_bp
+    from agents.orion_analyzer import run_analysis
+    from agents.session_agent import session_bp
+    AGENTS_AVAILABLE = True
+except ImportError:
+    AGENTS_AVAILABLE = False
 
-# Watsonx Initialization
-watsonx_api_key = os.getenv("WATSONX_API_KEY")
-watsonx_project_id = os.getenv("WATSONX_PROJECT_ID")
-watsonx_creds_dict = {
-    "apikey":watsonx_api_key,
-    "project_id":watsonx_project_id,
-    "url": "https://au-syd.ml.cloud.ibm.com"
-}
-watsonx_creds = Credentials.from_dict(watsonx_creds_dict)
-
-
-watsonx_model = ModelInference(
-    model_id="ibm/granite-3-8b-instruct",
-    credentials=watsonx_creds,
-    project_id=watsonx_project_id,
-    params={
-        "decoding_method": "greedy",
-        "max_new_tokens": 100
-    }
-)
-
-# Root Endpoint
-@app.route('/')
-def index():
-    return "Welcome to Aura Backend! Use /kai/screening to start the screening."
-
-# Kai - Mental Health Screening
-SCREENING_QUESTIONS = [
-    {"id": "q1", "text": "Over the last 2 weeks, how often have you been bothered by having little interest or pleasure in doing things?"},
-    {"id": "q2", "text": "Over the last 2 weeks, how often have you been bothered by feeling down, depressed, or hopeless?"},
-    {"id": "q3", "text": "Trouble falling or staying asleep, or sleeping too much?"},
-    {"id": "q4", "text": "Feeling tired or having little energy?"},
-    {"id": "q5", "text": "Poor appetite or overeating?"},
-    {"id": "q6", "text": "Feeling bad about yourself — or that you are a failure or have let yourself or your family down?"},
-    {"id": "q7", "text": "Trouble concentrating on things, such as reading the newspaper or watching television?"},
-    {"id": "q8", "text": "Moving or speaking so slowly that other people could have noticed? Or the opposite — being so fidgety or restless that you have been moving around a lot more than usual?"},
-    {"id": "q9", "text": "Thoughts that you would be better off dead or of hurting yourself in some way?"}
-]
-
-RESPONSE_OPTIONS = ["Not at all", "Several days", "More than half the days", "Nearly every day"]
-
-@app.route('/kai/screening', methods=['POST'])
-def handle_screening():
-    data = request.json
-    user_id = data.get('userId')
-    answer_index = data.get('answerIndex')
-
-    if not user_id:
-        return jsonify({"error": "userId is required"}), 400
-
-    user_ref = db.collection('users').document(user_id)
-    user_doc = user_ref.get()
-
-    if not user_doc.exists or answer_index is None:
-        user_ref.set({'currentQuestionIndex': 0, 'scores': {}})
-        current_question_index = 0
-    else:
-        user_data = user_doc.to_dict()
-        current_question_index = user_data.get('currentQuestionIndex', 0)
-        if current_question_index > 0:
-            previous_question_id = SCREENING_QUESTIONS[current_question_index - 1]['id']
-            user_ref.update({f'scores.{previous_question_id}': answer_index})
-
-    if current_question_index >= len(SCREENING_QUESTIONS):
-        return jsonify({
-            "message": "Thank you for completing the screening. You can now chat with Elara."
-        })
-
-    next_question = SCREENING_QUESTIONS[current_question_index]
-    user_ref.update({'currentQuestionIndex': current_question_index + 1})
-
-    return jsonify({
-        "question": next_question['text'],
-        "options": RESPONSE_OPTIONS
-    })
-
-# Elara - Primary Chat Agent
-@app.route('/elara/chat', methods=['POST'])
-def handle_chat():
-    data = request.json
-    user_id = data.get('userId')
-    user_message = data.get('message')
-
-    if not user_id or not user_message:
-        return jsonify({"error": "userId and message are required"}), 400
-
-    # Aegis - Safety Filter
-    AEGIS_TRIGGERS = ['suicide', 'kill myself', 'want to die', 'hurting myself', 'better off dead']
-    if any(trigger in user_message.lower() for trigger in AEGIS_TRIGGERS):
-        return jsonify({
-            "agent": "Aegis",
-            "response": "It sounds like you are in significant distress. It is vital to talk to someone right away. Please call or text 988 in the US. Help is available."
-        })
-
-    # Orion - Insight Check
-    user_ref = db.collection('users').document(user_id)
-    user_doc = user_ref.get()
-    user_data = user_doc.to_dict()
-    insight_flag = user_data.get('insight_flag')
-
-    orion_prompt_injection = ""
-    if insight_flag == 'HIGH_PHQ9_SCORE':
-        orion_prompt_injection = "SYSTEM NOTE: An automated analysis detected that this user recently scored high on a depression screening. Be extra gentle and supportive, and perhaps check in on how they've been feeling lately."
-        user_ref.update({'insight_flag': firestore.DELETE_FIELD})
-
-    # Retrieve last 10 messages from Firestore
-    history_ref = db.collection('users').document(user_id).collection('chatHistory').order_by('timestamp').limit(10)
-    history_docs = history_ref.stream()
-
-    chat_history = []
-    for doc in history_docs:
-        doc_data = doc.to_dict()
-        chat_history.append(f"User: {doc_data.get('user_message')}")
-        chat_history.append(f"Elara: {doc_data.get('ai_response')}")
-
-    # Create prompt with Orion context if available
-    prompt = ""
-    if orion_prompt_injection:
-        prompt += orion_prompt_injection + "\n"
-    prompt += "\n".join(chat_history)
-    prompt += f"\nUser: {user_message}\nElara:"
-
-    # Generate response from Watsonx
-    response = watsonx_model.generate(prompt=prompt)
-    ai_response_text = response['results'][0]['generated_text']
-
-    # Save chat to Firestore
-    new_chat_doc_ref = db.collection('users').document(user_id).collection('chatHistory').document()
-    new_chat_doc_ref.set({
-        'user_message': user_message,
-        'ai_response': ai_response_text,
-        'timestamp': firestore.SERVER_TIMESTAMP
-    })
-
-    return jsonify({"agent": "Elara", "response": ai_response_text})
-
-# A simple database of resources for Vero
-VERO_RESOURCES = {
-    "breathing_exercise_1": {
-        "type": "Guided Exercise",
-        "title": "Box Breathing",
-        "steps": [
-            "1. Inhale slowly for 4 seconds.",
-            "2. Hold your breath for 4 seconds.",
-            "3. Exhale slowly for 4 seconds.",
-            "4. Hold the exhale for 4 seconds.",
-            "5. Repeat for 2 minutes."
-        ]
-    }
-}
-
-# 🛠️ Vero Resource Endpoint
-@app.route('/vero/getResource', methods=['POST'])
-def get_resource():
-    data = request.json
-    action_id = data.get('actionId')
-
-    if not action_id:
-        return jsonify({"error": "actionId is required"}), 400
-
-    resource = VERO_RESOURCES.get(action_id)
-
-    if not resource:
-        return jsonify({"error": "Resource not found"}), 404
+# Initialize Firebase globally
+def initialize_firebase():
+    """Initialize Firebase outside of app context."""
+    try:
+        backend_dir = os.path.abspath(os.path.dirname(__file__))
+        service_account_path = os.path.join(backend_dir, "serviceAccountKey.json")
         
-    return jsonify(resource)
+        if not os.path.exists(service_account_path):
+            print("Firebase service account key not found")
+            return False
+        else:
+            cred = credentials.Certificate(service_account_path)
+            firebase_admin.initialize_app(cred)
+            print("Firebase initialized successfully")
+            return True
+    except Exception as e:
+        print(f"Firebase initialization failed: {e}")
+        return False
 
-# Web template test
-@app.route('/test')
-def test_page():
-    return render_template("test.html")
+# Initialize Firebase
+firebase_available = initialize_firebase()
+
+def create_app():
+    """Create and configure Flask application."""
+    load_dotenv()
+    backend_dir = os.path.abspath(os.path.dirname(__file__))
+    frontend_dir = os.path.join(os.path.dirname(backend_dir), 'frontend')
+
+    app = Flask(__name__, template_folder=frontend_dir, static_folder=frontend_dir, static_url_path='')
+    CORS(app)
+    app.firebase_available = firebase_available
+
+    with app.app_context():
+        # Watsonx.ai setup
+        try:
+            watsonx_api_key = os.getenv("WATSONX_API_KEY")
+            watsonx_project_id = os.getenv("WATSONX_PROJECT_ID")
+
+            if not WATSONX_AVAILABLE:
+                app.watsonx_model = None
+            elif not watsonx_api_key or not watsonx_project_id:
+                app.watsonx_model = None
+            else:
+                try:
+                    creds = Credentials(api_key=watsonx_api_key, url="https://au-syd.ml.cloud.ibm.com")
+                    generate_params = {
+                        GenParams.DECODING_METHOD: "greedy",
+                        GenParams.MAX_NEW_TOKENS: 200,
+                        GenParams.MIN_NEW_TOKENS: 1,
+                        GenParams.TEMPERATURE: 0.7,
+                        GenParams.STOP_SEQUENCES: ["\n\n", "User:", "Elara:"]
+                    }
+
+                    model = ModelInference(
+                        model_id="ibm/granite-3-8b-instruct",
+                        credentials=creds,
+                        project_id=watsonx_project_id,
+                        params=generate_params
+                    )
+                    
+                    if AGENTS_AVAILABLE:
+                        set_elara_model(model)
+                        set_vero_model(model)
+                    app.watsonx_model = model
+                except Exception as e:
+                    print(f"Watsonx.ai initialization failed: {e}")
+                    app.watsonx_model = None
+        except Exception as e:
+            print(f"Watsonx.ai setup error: {e}")
+            app.watsonx_model = None
+
+    # Static file serving
+    @app.route('/styles.css')
+    def serve_css():
+        return send_from_directory(frontend_dir, 'styles.css')
+
+    @app.route('/script.js')
+    def serve_js():
+        return send_from_directory(frontend_dir, 'script.js')
+
+    @app.route('/favicon.svg')
+    def serve_favicon():
+        return send_from_directory(frontend_dir, 'favicon.svg')
+
+    @app.route('/')
+    def serve_index():
+        return render_template('index.html')
+
+    # Register blueprints
+    if AGENTS_AVAILABLE:
+        try:
+            app.register_blueprint(auth_bp)
+            app.register_blueprint(kai_bp)
+            app.register_blueprint(elara_bp)
+            app.register_blueprint(vero_bp)
+            app.register_blueprint(aegis_bp)
+            app.register_blueprint(session_bp)
+        except Exception as e:
+            print(f"Error registering blueprints: {e}")
+
+    return app
+
+
+def orion_background_worker(app_instance):
+    """Background worker for Orion analysis."""
+    time.sleep(15)
+    while True:
+        try:
+            with app_instance.app_context():
+                if hasattr(app_instance, 'firebase_available') and app_instance.firebase_available:
+                    db = firestore.client()
+                    if AGENTS_AVAILABLE:
+                        run_analysis(db)
+        except Exception as e:
+            print(f"Orion background worker error: {e}")
+        time.sleep(3600)
+
+
+app = create_app()
 
 if __name__ == '__main__':
-    for rule in app.url_map.iter_rules():
-        print(rule.endpoint, rule.methods, rule.rule)
+    try:
+        threading.Thread(target=orion_background_worker, args=(app,), daemon=True).start()
+    except Exception as e:
+        print(f"Could not start Orion background agent: {e}")
 
-    app.run(debug=True)
+    app.run(debug=True, use_reloader=False, host='0.0.0.0', port=5000)

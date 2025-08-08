@@ -1,42 +1,84 @@
+# backend/test.py
+
 import requests
+import json
 
-API_KEY = "0hdsqfcV-287OL19uUyf5OpI1CPG4I5L-6IeXC1iQjvr"
-IAM_URL = "https://iam.cloud.ibm.com/identity/token"
+def test_backend():
+    """Test the basic backend functionality"""
+    base_url = "http://127.0.0.1:5000"
+    
+    print("Testing AURA Backend...")
+    
+    # Test 1: Check if server is running
+    try:
+        response = requests.get(f"{base_url}/")
+        print(f"✅ Server is running: {response.status_code}")
+    except Exception as e:
+        print(f"❌ Server not running: {e}")
+        return
+    
+    # Test 2: Test signup endpoint
+    try:
+        signup_data = {
+            "name": "Test User",
+            "age": 25,
+            "email": "test@example.com",
+            "password": "testpassword123"
+        }
+        response = requests.post(f"{base_url}/auth/signup", json=signup_data)
+        print(f"✅ Signup endpoint: {response.status_code}")
+        if response.status_code == 201:
+            print("   - User created successfully")
+        elif response.status_code == 409:
+            print("   - User already exists (expected)")
+    except Exception as e:
+        print(f"❌ Signup test failed: {e}")
+    
+    # Test 3: Test login endpoint
+    try:
+        login_data = {
+            "email": "test@example.com",
+            "password": "testpassword123"
+        }
+        response = requests.post(f"{base_url}/auth/login", json=login_data)
+        print(f"✅ Login endpoint: {response.status_code}")
+        if response.status_code == 200:
+            data = response.json()
+            print(f"   - Login successful for user: {data.get('name')}")
+            user_id = data.get('userId')
+        else:
+            print(f"   - Login failed: {response.json().get('error')}")
+            return
+    except Exception as e:
+        print(f"❌ Login test failed: {e}")
+        return
+    
+    # Test 4: Test Elara greeting
+    try:
+        greeting_data = {
+            "userId": user_id,
+            "metrics": {"anxiety": 50, "depression": 50, "stress": 50}
+        }
+        response = requests.post(f"{base_url}/elara/greeting", json=greeting_data)
+        print(f"✅ Elara greeting: {response.status_code}")
+        if response.status_code == 200:
+            data = response.json()
+            print(f"   - Greeting: {data.get('response')[:50]}...")
+    except Exception as e:
+        print(f"❌ Elara greeting test failed: {e}")
+    
+    # Test 5: Test Vero resource
+    try:
+        resource_data = {"query": "stress"}
+        response = requests.post(f"{base_url}/vero/getResource", json=resource_data)
+        print(f"✅ Vero resource: {response.status_code}")
+        if response.status_code == 200:
+            data = response.json()
+            print(f"   - Resource: {data.get('title')}")
+    except Exception as e:
+        print(f"❌ Vero resource test failed: {e}")
+    
+    print("\n🎉 Backend tests completed!")
 
-response = requests.post(
-    IAM_URL,
-    headers={"Content-Type": "application/x-www-form-urlencoded"},
-    data={"grant_type": "urn:ibm:params:oauth:grant-type:apikey", "apikey": API_KEY}
-)
-
-print("Status Code:", response.status_code)
-print("Response:", response.json())
-from ibm_watsonx_ai.foundation_models import ModelInference
-
-# ✅ Fill in your actual credentials below
-credentials = {
-    "apikey": "0hdsqfcV-287OL19uUyf5OpI1CPG4I5L-6IeXC1iQjvr",  # Replace with your real API key
-    "url": "https://au-syd.ml.cloud.ibm.com"  # Sydney region endpoint
-}
-
-# ✅ Initialize the Watsonx model
-try:
-    watsonx_model = ModelInference(
-        model_id="ibm/granite-3-8b-instruct",  # You can change model if needed
-        credentials=credentials,
-        project_id="bcf0a51a-266f-45a5-ac65-566ee023d881",  # Replace with your actual Project ID
-        #region="au-syd"
-    )
-
-    # ✅ Generate a simple test prompt
-    response = watsonx_model.generate(
-        prompt="What are some common mental health coping strategies?",
-        #max_tokens=100
-    )
-
-    # ✅ Print the model's response
-    print("Response:\n", response)
-
-except Exception as e:
-    print("❌ Error occurred:")
-    print(e)
+if __name__ == "__main__":
+    test_backend()
