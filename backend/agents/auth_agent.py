@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 auth_bp = Blueprint('auth_agent', __name__)
 
 # Default metrics for new users
-DEFAULT_METRICS = {"anxiety": 50, "depression": 50, "stress": 50}
+DEFAULT_METRICS = {"anxiety": 0, "depression": 0, "stress": 0}
 
 @auth_bp.route('/auth/signup', methods=['POST'])
 def signup():

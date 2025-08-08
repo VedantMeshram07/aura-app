@@ -69,6 +69,7 @@ def create_app():
         try:
             watsonx_api_key = os.getenv("WATSONX_API_KEY")
             watsonx_project_id = os.getenv("WATSONX_PROJECT_ID")
+            watsonx_url = os.getenv("WATSONX_URL")
 
             if not WATSONX_AVAILABLE:
                 app.watsonx_model = None
@@ -76,7 +77,7 @@ def create_app():
                 app.watsonx_model = None
             else:
                 try:
-                    creds = Credentials(api_key=watsonx_api_key, url="https://au-syd.ml.cloud.ibm.com")
+                    creds = Credentials(api_key=watsonx_api_key, url=watsonx_url)
                     generate_params = {
                         GenParams.DECODING_METHOD: "greedy",
                         GenParams.MAX_NEW_TOKENS: 200,
