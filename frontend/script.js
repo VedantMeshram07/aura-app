@@ -11,6 +11,50 @@ let currentTheme = 'light';
 let hasShownGreeting = false;
 let greetingInFlight = false;
 
+// Chat history persistence helpers
+function getChatStorageKey() {
+  const userId = currentUser && currentUser.id ? currentUser.id : 'anon';
+  const sessionId = currentSessionId || 'nosession';
+  return `aura_chat_${userId}_${sessionId}`;
+}
+
+function saveChatHistory() {
+  try {
+    const key = getChatStorageKey();
+    window.sessionStorage.setItem(key, JSON.stringify(chatHistory));
+  } catch (e) {
+    // ignore storage errors
+  }
+}
+
+function loadChatHistoryFromStorage() {
+  try {
+    const key = getChatStorageKey();
+    const raw = window.sessionStorage.getItem(key);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        chatHistory = parsed;
+      }
+    }
+  } catch (e) {
+    // ignore storage errors
+  }
+}
+
+function renderChatHistory() {
+  const chatLog = document.getElementById('chat-log');
+  if (!chatLog) return;
+  chatLog.innerHTML = '';
+  chatHistory.forEach(({ text, agent }) => {
+    const bubble = document.createElement('div');
+    bubble.className = `chat-bubble ${agent === 'user' ? 'user-bubble' : 'ai-bubble'}`;
+    bubble.textContent = text;
+    chatLog.appendChild(bubble);
+  });
+  chatLog.scrollTop = chatLog.scrollHeight;
+}
+
 // Agent configurations
 const AGENTS = {
   Kai: { name: "Kai", icon: "fas fa-clipboard-check", type: "Interactive" },
@@ -93,10 +137,10 @@ function updateMetricsDisplay(metrics) {
   const depressionFill = document.getElementById('depression-fill');
   const stressFill = document.getElementById('stress-fill');
   
-  // Update values
-  anxietyValue.textContent = metrics.anxiety || 0;
-  depressionValue.textContent = metrics.depression || 0;
-  stressValue.textContent = metrics.stress || 0;
+  // Update values with qualitative labels
+  anxietyValue.textContent = valueToLabel('anxiety', metrics.anxiety || 0);
+  depressionValue.textContent = valueToLabel('depression', metrics.depression || 0);
+  stressValue.textContent = valueToLabel('stress', metrics.stress || 0);
   
   // Update progress bars
   anxietyFill.style.width = `${metrics.anxiety || 0}%`;
@@ -107,6 +151,19 @@ function updateMetricsDisplay(metrics) {
   
   stressFill.style.width = `${metrics.stress || 0}%`;
   stressFill.className = 'metric-fill stress';
+}
+
+function valueToLabel(metric, value) {
+  const v = Math.max(0, Math.min(100, Number(value) || 0));
+  const buckets = [20, 40, 60, 80, 100];
+  const idx = buckets.findIndex(t => v <= t);
+  const labels = {
+    anxiety: ['Calm', 'Uneasy', 'Worried', 'Anxious', 'Overwhelmed'],
+    depression: ['Uplifted', 'Okay', 'Low', 'Down', 'Very Low Mood'],
+    stress: ['Relaxed', 'Tense', 'Stressed', 'Very Stressed', 'Burned Out']
+  };
+  const arr = labels[metric] || ['Very Low', 'Low', 'Moderate', 'High', 'Very High'];
+  return arr[Math.max(0, idx)];
 }
 
 async function reloadMetrics() {
@@ -248,6 +305,11 @@ function startScreening() {
       <div id="options" class="d-grid gap-3"></div>
     </div>
   </div>`);
+  
+  if (!isNewSession) {
+    loadChatHistoryFromStorage();
+    renderChatHistory();
+  }
   handleScreeningResponse();
 }
 
@@ -275,6 +337,10 @@ async function handleScreeningResponse(answerIndex = null) {
       // Screening completed
       alert(data.message);
       currentSessionId = data.sessionId;
+      if (data.metrics) {
+        updateMetricsDisplay(data.metrics);
+        if (currentUser) currentUser.metrics = data.metrics;
+      }
       loadChatInterface(true, currentUser.metrics);
     } else {
       // Continue screening
@@ -393,7 +459,7 @@ async function loadChatInterface(isNewSession = false, metrics = null) {
   }
 }
 
-function addBubble(text, agent) {
+function addBubble(text, agent, record = true) {
   const chatLog = document.getElementById('chat-log');
   if (!chatLog) return;
   
@@ -403,6 +469,11 @@ function addBubble(text, agent) {
   
   chatLog.appendChild(bubble);
   chatLog.scrollTop = chatLog.scrollHeight;
+  
+  if (record) {
+    chatHistory.push({ text, agent });
+    saveChatHistory();
+  }
 }
 
 async function sendMessage() {
@@ -436,6 +507,10 @@ async function sendMessage() {
     const data = await res.json();
     setActiveAgent(data.agent);
     
+    if (data.sessionId) {
+      currentSessionId = data.sessionId;
+    }
+    
     if (data.agent === 'Aegis') {
       setBackgroundAgentActive('Aegis', true);
       setTimeout(() => setBackgroundAgentActive('Aegis', false), 3000);
@@ -445,6 +520,11 @@ async function sendMessage() {
     
     if (data.show_resource_button && data.resource_data) {
       addResourceButton(data.resource_data);
+    }
+    
+    if (data.metrics) {
+      updateMetricsDisplay(data.metrics);
+      if (currentUser) currentUser.metrics = data.metrics;
     }
     
     setTimeout(() => setBackgroundAgentActive('Orion', false), 2000);
@@ -506,7 +586,7 @@ async function loadHistoryList() {
 
 async function viewPastSession(sessionId) {
   setActiveAgent('Elara');
-  loadInterface(`<div class="chat-container" id="chat-log"><p class="text-center text-muted">Loading past conversation...</p></div><div class="input-area"><input type="text" class="form-control" placeholder="This is a read-only view." disabled><button class="btn btn-primary" disabled>Send</button></div>`);
+  loadInterface(`<div class="chat-container" id="chat-log"><div class="d-flex justify-content-between align-items-center mb-2"><button class="btn btn-secondary btn-sm" onclick="returnToChat()">Back to Active Chat</button><span class="text-muted">Loading past conversation...</span></div></div><div class="input-area"><input type="text" class="form-control" placeholder="This is a read-only view." disabled><button class="btn btn-primary" disabled>Send</button></div>`);
   
   try {
     const res = await fetch(`${BACKEND_URL}/elara/getSession`, { 
@@ -521,8 +601,8 @@ async function viewPastSession(sessionId) {
     if (chatLog) {
       chatLog.innerHTML = '';
       history.forEach(msg => {
-        if (msg.user && msg.user !== 'SESSION_START') addBubble(msg.user, 'user');
-        if (msg.ai) addBubble(msg.ai, 'ai');
+        if (msg.user && msg.user !== 'SESSION_START') addBubble(msg.user, 'user', false);
+        if (msg.ai) addBubble(msg.ai, 'ai', false);
       });
     }
     

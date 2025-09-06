@@ -14,9 +14,9 @@ MAX_SENTENCES = 3
 
 # Resource keywords for Vero handoff
 RESOURCE_KEYWORDS = [
-    "resource", "link", "guide", "reference", "article", "tutorial",
-    "reading", "where can i", "provide me", "send me", "resource:", "help me",
-    "technique", "exercise", "method", "strategy", "tool", "tip"
+    "resource", "resources", "link", "links", "guide", "guides", "reference", "article", "articles", "tutorial",
+    "reading", "where can i", "provide", "provide me", "send", "send me", "share", "resource:", "help me",
+    "technique", "exercise", "method", "strategy", "tool", "tip", "steps", "how to", "instruction"
 ]
 
 
@@ -120,7 +120,13 @@ def sanitize_ai_response(raw_text: str) -> str:
 def _find_latest_session_for_user(db, user_id: str):
     """Find most recent session for user."""
     try:
-        q = db.collection('user_sessions').where('userId', '==', user_id).order_by('startTime', direction=firestore.Query.DESCENDING).limit(1).stream()
+        q = (
+            db.collection('user_sessions')
+              .where('userId', '==', user_id)
+              .order_by('startTime', direction=firestore.Query.DESCENDING)
+              .limit(1)
+              .stream()
+        )
         for doc in q:
             return doc.id
     except Exception as e:
@@ -376,7 +382,7 @@ def handle_chat():
 
     final_prompt = (
         f"{system_prompt}\n\n{history_text}User: \"{user_message}\"\n"
-        "<instructions>Respond with ONLY ONE Elara message. Do NOT include multiple 'Elara:' lines or simulate future turns. Keep it brief (1-3 sentences).</instructions>\n"
+        "<instructions>Respond with ONLY ONE Elara message. Do NOT include multiple 'Elara:' lines or simulate future turns. Keep it brief (1-3 sentences). If the user hints at wanting a technique or resource, include [ACTION:find_technique|<short_problem>].</instructions>\n"
         "Elara:"
     )
 
@@ -396,6 +402,14 @@ def handle_chat():
 
     ai_response_text = sanitize_ai_response(ai_response_text)
 
+    # Parse ACTION tag for proactive Vero handoff
+    try:
+        action_match = re.search(r"\[ACTION:find_technique\|([^\]]+)\]", ai_response_text, flags=re.I)
+        requested_problem = action_match.group(1).strip() if action_match else None
+        ai_response_text = re.sub(r"\s*\[ACTION:find_technique\|[^\]]+\]\s*", "", ai_response_text).strip()
+    except Exception:
+        requested_problem = None
+
     # Store chat turn
     try:
         if session_id:
@@ -407,7 +421,59 @@ def handle_chat():
     except Exception as e:
         print(f"Error storing chat history for session {session_id}: {e}")
 
-    return jsonify({"agent": "Elara", "response": ai_response_text, "sessionId": session_id})
+    # Lightweight heuristic to update metrics sensitivity after supportive replies
+    try:
+        if session_id and user_id:
+            state_ref = db.collection('user_states').document(user_id)
+            state_doc = state_ref.get()
+            if state_doc.exists:
+                cur = state_doc.to_dict().get('metrics', {"anxiety": 50, "depression": 50, "stress": 50})
+            else:
+                cur = {"anxiety": 50, "depression": 50, "stress": 50}
+
+            lowered = (ai_response_text or '').lower()
+            delta = 0
+            if any(k in lowered for k in ["great", "glad", "proud", "nice progress", "you did well", "well done"]):
+                delta = -2
+            elif any(k in lowered for k in ["breathe", "grounding", "try this technique", "we can try"]):
+                delta = -1
+
+            if delta != 0:
+                cur['anxiety'] = max(0, min(100, cur.get('anxiety', 50) + delta))
+                cur['depression'] = max(0, min(100, cur.get('depression', 50) + delta))
+                cur['stress'] = max(0, min(100, cur.get('stress', 50) + delta))
+                try:
+                    state_ref.update({
+                        'metrics': cur,
+                        'last_updated': firestore.SERVER_TIMESTAMP
+                    })
+                except Exception as e:
+                    print(f"Error updating metrics post chat: {e}")
+            updated_metrics = cur
+        else:
+            updated_metrics = None
+    except Exception as e:
+        print(f"Heuristic metrics update error: {e}")
+        updated_metrics = None
+
+    # If ACTION requested, attach resource button data immediately
+    if requested_problem:
+        try:
+            from .vero_agent import find_resource_for_query
+            resource_result = find_resource_for_query(requested_problem, user_region)
+            if resource_result:
+                return jsonify({
+                    "agent": "Elara",
+                    "response": ai_response_text,
+                    "sessionId": session_id,
+                    "metrics": updated_metrics,
+                    "show_resource_button": True,
+                    "resource_data": resource_result
+                })
+        except Exception as e:
+            print(f"Error attaching Vero resource: {e}")
+
+    return jsonify({"agent": "Elara", "response": ai_response_text, "sessionId": session_id, "metrics": updated_metrics})
 
 
 @elara_bp.route('/elara/getHistoryList', methods=['POST'])
@@ -421,12 +487,14 @@ def get_history_list():
         for doc in sessions_ref:
             doc_dict = doc.to_dict()
             start_time = doc_dict.get('startTime')
-            date_str = "Date not available"
+            date_str = ""
             try:
                 if isinstance(start_time, datetime.datetime):
-                    date_str = start_time.strftime('%B %d, %Y')
+                    date_str = start_time.strftime('%b %d, %Y')
+                else:
+                    date_str = "Recent chat"
             except Exception:
-                pass
+                date_str = "Recent chat"
             session_list.append({"id": doc.id, "date": date_str})
         return jsonify(session_list)
     except Exception as e:

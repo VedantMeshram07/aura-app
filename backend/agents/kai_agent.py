@@ -215,7 +215,8 @@ def handle_screening():
             
             response_data = {
                 "message": "Thank you for completing your check-in. Let's start a new chat with Elara.",
-                "sessionId": session_id
+                "sessionId": session_id,
+                "metrics": new_metrics
             }
         else:
             response_data = {
