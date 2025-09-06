@@ -196,6 +196,33 @@ Based on the user's long-term mental health metrics (0-100 scale), generate a SI
 Your welcoming message:
 """
 
+    # Resolve or create session FIRST to avoid duplicate parallel session creation
+    session_id = None
+    if user_id:
+        session_id = _get_or_create_session(db, user_id, provided_session_id=None)
+
+    # If we already have a greeting stored for this session recently, return it (idempotent)
+    if session_id:
+        try:
+            recent_docs = (
+                db.collection('user_sessions')
+                  .document(session_id)
+                  .collection('chatHistory')
+                  .order_by('timestamp', direction=firestore.Query.DESCENDING)
+                  .limit(5)
+                  .stream()
+            )
+            for d in recent_docs:
+                payload = d.to_dict()
+                # Treat any prior system-initiated message (no user_message) as greeting-like; prefer explicit type if present
+                if payload.get('type') == 'greeting' or payload.get('user_message') is None:
+                    prev_greeting = payload.get('ai_response') or ""
+                    if prev_greeting:
+                        return jsonify({"agent": "Elara", "response": prev_greeting, "sessionId": session_id, "duplicate": True})
+        except Exception as e:
+            print(f"Error checking for existing greeting in session {session_id}: {e}")
+
+    # No prior greeting found; generate a new one
     try:
         if watsonx_model:
             response = watsonx_model.generate(prompt=greeting_prompt)
@@ -206,15 +233,14 @@ Your welcoming message:
         print(f"Error calling Watsonx AI for greeting: {e}")
         ai_response_text = generate_mock_response(greeting_prompt)
 
-    session_id = None
-    if user_id:
-        session_id = _get_or_create_session(db, user_id, provided_session_id=None)
-
+    # Store greeting once
     if session_id:
         try:
             db.collection('user_sessions').document(session_id).collection('chatHistory').add({
                 'user_message': None,
                 'ai_response': ai_response_text,
+                'ai_agent': 'Elara',
+                'type': 'greeting',
                 'timestamp': firestore.SERVER_TIMESTAMP,
             })
         except Exception as e:

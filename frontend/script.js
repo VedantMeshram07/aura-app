@@ -9,6 +9,7 @@ let activeAgent = "Elara";
 let activeBackgroundAgents = new Set();
 let currentTheme = 'light';
 let hasShownGreeting = false;
+let greetingInFlight = false;
 
 // Agent configurations
 const AGENTS = {
@@ -355,6 +356,7 @@ async function loadChatInterface(isNewSession = false, metrics = null) {
     currentSessionId = null;
     chatHistory = [];
     hasShownGreeting = false;
+    greetingInFlight = false;
   }
   
   loadInterface(`<div class="chat-container" id="chat-log">
@@ -365,8 +367,11 @@ async function loadChatInterface(isNewSession = false, metrics = null) {
     <button class="btn btn-primary" onclick="sendMessage()">Send</button>
   </div>`);
   
-  if (isNewSession && metrics && !hasShownGreeting) {
+  if (isNewSession && metrics && !hasShownGreeting && !greetingInFlight) {
     try {
+      // Guard against race conditions causing duplicate greetings
+      hasShownGreeting = true;
+      greetingInFlight = true;
       const res = await fetch(`${BACKEND_URL}/elara/greeting`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -376,12 +381,14 @@ async function loadChatInterface(isNewSession = false, metrics = null) {
       if (res.ok) {
         const data = await res.json();
         currentSessionId = data.sessionId;
-        addBubble(data.response, 'elara');
-        hasShownGreeting = true;
+        if (!data.duplicate) {
+          addBubble(data.response, 'elara');
+        }
+        greetingInFlight = false;
       }
     } catch (error) {
       addBubble("Hello! I'm Elara, your AI companion. How are you feeling today?", 'elara');
-      hasShownGreeting = true;
+      greetingInFlight = false;
     }
   }
 }
