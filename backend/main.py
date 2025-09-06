@@ -94,8 +94,14 @@ def create_app():
                     )
                     
                     if AGENTS_AVAILABLE:
-                        set_elara_model(model)
-                        set_vero_model(model)
+                        try:
+                            set_elara_model(model)
+                        except Exception as e:
+                            print(f"Could not set Elara model: {e}")
+                        try:
+                            set_vero_model(model)
+                        except Exception as e:
+                            print(f"Could not set Vero model: {e}")
                     app.watsonx_model = model
                 except Exception as e:
                     print(f"Watsonx.ai initialization failed: {e}")
