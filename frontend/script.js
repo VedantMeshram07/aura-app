@@ -218,7 +218,15 @@ async function login(event) {
     
     if (res.ok) {
       const data = await res.json();
-      currentUser = data.user;
+      // Support both { user: {...} } and legacy flat fields
+      currentUser = data.user || {
+        id: data.userId,
+        name: data.name,
+        age: data.age,
+        email: email,
+        metrics: data.metrics || { anxiety: 0, depression: 0, stress: 0 },
+        region: data.region || 'GLOBAL'
+      };
       showScreen('app-screen');
       initializeApp(data.hasRecentScreening, currentUser.metrics);
     } else {
