@@ -1,5 +1,5 @@
-// Backend URL configuration
-const BACKEND_URL = "http://127.0.0.1:5000";
+// Backend URL configuration - automatically detect if needed
+const BACKEND_URL = window.location.protocol + "//" + window.location.hostname + ":5000";
 
 // Global state
 let currentUser = { id: null, name: null, age: null, metrics: null, region: "GLOBAL" };
@@ -210,14 +210,22 @@ async function login(event) {
     const form = document.getElementById('login-form');
     const submitBtn = form ? form.querySelector('button[type="submit"]') : null;
     if (submitBtn) submitBtn.disabled = true;
+    
+    console.log('🔍 Attempting login for:', email);
+    console.log('🔍 Backend URL:', BACKEND_URL);
+    
     const res = await fetch(`${BACKEND_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: email.toLowerCase(), password }),
     });
     
+    console.log('🔍 Login response status:', res.status);
+    
     if (res.ok) {
       const data = await res.json();
+      console.log('✅ Login successful:', data);
+      
       // Support both { user: {...} } and legacy flat fields
       currentUser = data.user || {
         id: data.userId,
@@ -231,11 +239,20 @@ async function login(event) {
       initializeApp(data.hasRecentScreening, currentUser.metrics);
     } else {
       const errorData = await res.json();
+      console.error('❌ Login failed:', errorData);
       alert(errorData.error || 'Login failed. Please check your credentials.');
     }
   } catch (error) {
-    console.error('Login error:', error);
-    alert('Login failed. Please try again.');
+    console.error('❌ Login error:', error);
+    
+    // Provide more specific error messages
+    if (error.name === 'TypeError' && error.message.includes('fetch')) {
+      alert('Cannot connect to server. Please check if the server is running.');
+    } else if (error.name === 'SyntaxError') {
+      alert('Server returned invalid response. Please try again.');
+    } else {
+      alert('Login failed. Please try again.');
+    }
   } finally {
     loginInFlight = false;
     const form = document.getElementById('login-form');
