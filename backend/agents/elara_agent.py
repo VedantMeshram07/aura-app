@@ -16,7 +16,9 @@ MAX_SENTENCES = 3
 RESOURCE_KEYWORDS = [
     "resource", "resources", "link", "links", "guide", "guides", "reference", "article", "articles", "tutorial",
     "reading", "where can i", "provide", "provide me", "send", "send me", "share", "resource:", "help me",
-    "technique", "exercise", "method", "strategy", "tool", "tip", "steps", "how to", "instruction"
+    "technique", "exercise", "method", "strategy", "tool", "tip", "steps", "how to", "instruction",
+    # be more sensitive
+    "show me", "suggest", "recommend", "what can i do", "any ideas"
 ]
 
 

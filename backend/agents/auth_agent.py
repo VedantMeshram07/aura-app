@@ -19,9 +19,10 @@ def signup():
     password = data.get('password')
     name = data.get('name')
     age = data.get('age')
+    region = data.get('region')
 
     # Validation
-    if not all([email, password, name, age]):
+    if not all([email, password, name, age, region]):
         return jsonify({"error": "Missing required fields"}), 400
 
     # Check if user already exists
@@ -39,7 +40,8 @@ def signup():
         "age": age,
         "email": email,
         "password_hash": hashed_password,
-        "created_at": firestore.SERVER_TIMESTAMP
+        "created_at": firestore.SERVER_TIMESTAMP,
+        "region": region
     })
 
     # Create persistent metrics state
@@ -103,10 +105,49 @@ def login():
             "age": user_data.get('age'),
             "email": user_data.get('email'),
             "metrics": user_metrics,
-            "region": "GLOBAL"
+            "region": user_data.get('region') or "GLOBAL"
         },
         "hasRecentScreening": has_recent_screening
     })
+
+
+@auth_bp.route('/auth/cleanupUsersWithoutRegion', methods=['POST'])
+def cleanup_users_without_region():
+    """Delete all accounts that don't have a region field set."""
+    db = firestore.client()
+    try:
+        deleted_count = 0
+        users = db.collection('registered_users').stream()
+        for doc in users:
+            data = doc.to_dict()
+            if not data.get('region'):
+                # Delete user state and sessions, then the user
+                try:
+                    # Delete user state
+                    db.collection('user_states').document(doc.id).delete()
+                except Exception:
+                    pass
+                # Delete sessions
+                try:
+                    sessions = db.collection('user_sessions').where('userId', '==', doc.id).stream()
+                    for s in sessions:
+                        # Delete chatHistory subcollection
+                        try:
+                            chats = db.collection('user_sessions').document(s.id).collection('chatHistory').stream()
+                            for c in chats:
+                                db.collection('user_sessions').document(s.id).collection('chatHistory').document(c.id).delete()
+                        except Exception:
+                            pass
+                        db.collection('user_sessions').document(s.id).delete()
+                except Exception:
+                    pass
+                # Delete user doc
+                db.collection('registered_users').document(doc.id).delete()
+                deleted_count += 1
+        return jsonify({"deleted": deleted_count})
+    except Exception as e:
+        print(f"Cleanup error: {e}")
+        return jsonify({"error": "Cleanup failed"}), 500
 
 
 @auth_bp.route('/auth/getMetrics', methods=['GET'])

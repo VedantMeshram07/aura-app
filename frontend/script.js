@@ -137,10 +137,10 @@ function updateMetricsDisplay(metrics) {
   const depressionFill = document.getElementById('depression-fill');
   const stressFill = document.getElementById('stress-fill');
   
-  // Update values with qualitative labels
-  anxietyValue.textContent = valueToLabel('anxiety', metrics.anxiety || 0);
-  depressionValue.textContent = valueToLabel('depression', metrics.depression || 0);
-  stressValue.textContent = valueToLabel('stress', metrics.stress || 0);
+  // Update values numeric 0-100
+  anxietyValue.textContent = metrics.anxiety || 0;
+  depressionValue.textContent = metrics.depression || 0;
+  stressValue.textContent = metrics.stress || 0;
   
   // Update progress bars
   anxietyFill.style.width = `${metrics.anxiety || 0}%`;
@@ -151,19 +151,6 @@ function updateMetricsDisplay(metrics) {
   
   stressFill.style.width = `${metrics.stress || 0}%`;
   stressFill.className = 'metric-fill stress';
-}
-
-function valueToLabel(metric, value) {
-  const v = Math.max(0, Math.min(100, Number(value) || 0));
-  const buckets = [20, 40, 60, 80, 100];
-  const idx = buckets.findIndex(t => v <= t);
-  const labels = {
-    anxiety: ['Calm', 'Uneasy', 'Worried', 'Anxious', 'Overwhelmed'],
-    depression: ['Uplifted', 'Okay', 'Low', 'Down', 'Very Low Mood'],
-    stress: ['Relaxed', 'Tense', 'Stressed', 'Very Stressed', 'Burned Out']
-  };
-  const arr = labels[metric] || ['Very Low', 'Low', 'Moderate', 'High', 'Very High'];
-  return arr[Math.max(0, idx)];
 }
 
 async function reloadMetrics() {
@@ -243,8 +230,9 @@ async function signup(event) {
   const email = document.getElementById('signupEmail').value.trim();
   const password = document.getElementById('signupPassword').value.trim();
   const age = parseInt(document.getElementById('signupAge').value);
+  const region = document.getElementById('signupRegion').value;
   
-  if (!name || !email || !password || !age) {
+  if (!name || !email || !password || !age || !region) {
     alert('Please fill in all fields.');
     return;
   }
@@ -253,7 +241,7 @@ async function signup(event) {
     const res = await fetch(`${BACKEND_URL}/auth/signup`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, email, password, age }),
+      body: JSON.stringify({ name, email, password, age, region }),
     });
     
     if (res.ok) {
@@ -669,7 +657,7 @@ async function handleVeroAction(query) {
     const res = await fetch(`${BACKEND_URL}/vero/getResource`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query }),
+      body: JSON.stringify({ query, userId: currentUser.id, region: currentUser.region }),
     });
     
     if (!res.ok) throw new Error("Network response was not ok");
