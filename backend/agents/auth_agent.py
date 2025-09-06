@@ -15,19 +15,24 @@ def signup():
     db = firestore.client()
     data = request.json
 
-    email = data.get('email')
+    email = (data.get('email') or '').strip()
     password = data.get('password')
-    name = data.get('name')
+    name = (data.get('name') or '').strip()
     age = data.get('age')
-    region = data.get('region')
+    region = (data.get('region') or 'GLOBAL').strip().upper()
 
     # Validation
+    try:
+        age = int(age)
+    except Exception:
+        return jsonify({"error": "Age must be a number"}), 400
+
     if not all([email, password, name, age, region]):
         return jsonify({"error": "Missing required fields"}), 400
 
     # Check if user already exists
     existing_user = db.collection('registered_users').where('email', '==', email).limit(1).get()
-    if existing_user:
+    if existing_user and len(existing_user) > 0:
         return jsonify({"error": "User with this email already exists"}), 409
 
     # Hash password
