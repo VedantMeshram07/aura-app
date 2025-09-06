@@ -17,6 +17,13 @@ def set_watsonx_model(model):
     global watsonx_model
     watsonx_model = model
 
+
+def _get_db_or_none():
+    try:
+        return firestore.client()
+    except Exception:
+        return None
+
 def _scrape_first_result(query: str):
     """Very light web scraping: search via DuckDuckGo HTML and fetch first result content."""
     if not SCRAPING_AVAILABLE:
@@ -187,7 +194,7 @@ def generate_mock_resource(query):
 @vero_bp.route('/vero/getResource', methods=['POST'])
 def get_resource():
     """Get resource for user query."""
-    db = firestore.client()
+    db = _get_db_or_none()
     data = request.json
     problem_query = data.get('query')
     user_id = data.get('userId')
@@ -241,7 +248,7 @@ The best technique for "{problem_query}" is:
             # Gather short chat context from last few turns
             context_text = ""
             try:
-                if user_id:
+                if user_id and db:
                     # Get latest session for user
                     sessions = db.collection('user_sessions').where('userId', '==', user_id).order_by('startTime', direction=firestore.Query.DESCENDING).limit(1).stream()
                     session_id = None
