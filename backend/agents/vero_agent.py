@@ -1,5 +1,8 @@
 # Vero Agent - Resource Provider
 from flask import Blueprint, request, jsonify
+from firebase_admin import firestore
+import requests
+from bs4 import BeautifulSoup
 from datetime import datetime
 
 vero_bp = Blueprint('vero_agent', __name__)
@@ -10,7 +13,29 @@ def set_watsonx_model(model):
     global watsonx_model
     watsonx_model = model
 
-def find_resource_for_query(query, region='GLOBAL'):
+def _scrape_first_result(query: str):
+    """Very light web scraping: search via DuckDuckGo HTML and fetch first result content."""
+    try:
+        q = requests.utils.quote(query)
+        search_url = f"https://duckduckgo.com/html/?q={q}"
+        s = requests.Session()
+        r = s.get(search_url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
+        soup = BeautifulSoup(r.text, 'html.parser')
+        a = soup.select_one('a.result__a')
+        if not a or not a.get('href'):
+            return None
+        target = a.get('href')
+        page = s.get(target, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
+        psoup = BeautifulSoup(page.text, 'html.parser')
+        # Extract main text
+        paragraphs = [p.get_text(strip=True) for p in psoup.select('p')]
+        content = "\n".join(paragraphs[:10])[:2000]
+        return {"url": target, "content": content}
+    except Exception:
+        return None
+
+
+def find_resource_for_query(query, region='GLOBAL', chat_context: str = ""):
     """Find resources for user queries with proper source attribution."""
     query_lower = query.lower()
     
@@ -64,6 +89,17 @@ def find_resource_for_query(query, region='GLOBAL'):
             ]
         }
     else:
+        # Try web scrape fallback based on context
+        scraped = _scrape_first_result(f"mental health technique for {query}") or _scrape_first_result(query)
+        if scraped:
+            return {
+                "type": "web",
+                "title": f"Resource for: {query}",
+                "description": "Web-sourced information related to your request.",
+                "source": "Sourced from: Web",
+                "source_url": scraped["url"],
+                "steps": [scraped["content"][:800] or "Open the link to read more."]
+            }
         return {
             "type": "technique",
             "title": "5-4-3-2-1 Grounding Technique",
@@ -145,8 +181,10 @@ def generate_mock_resource(query):
 @vero_bp.route('/vero/getResource', methods=['POST'])
 def get_resource():
     """Get resource for user query."""
+    db = firestore.client()
     data = request.json
     problem_query = data.get('query')
+    user_id = data.get('userId')
     if not problem_query:
         return jsonify({"error": "A query is required to find a resource"}), 400
 
@@ -194,7 +232,38 @@ The best technique for "{problem_query}" is:
                 "steps": steps
             }
         else:
-            response_data = generate_mock_resource(problem_query)
+            # Gather short chat context from last few turns
+            context_text = ""
+            try:
+                if user_id:
+                    # Get latest session for user
+                    sessions = db.collection('user_sessions').where('userId', '==', user_id).order_by('startTime', direction=firestore.Query.DESCENDING).limit(1).stream()
+                    session_id = None
+                    for d in sessions:
+                        session_id = d.id
+                        break
+                    if session_id:
+                        rows = (
+                            db.collection('user_sessions').document(session_id)
+                            .collection('chatHistory')
+                            .order_by('timestamp', direction=firestore.Query.DESCENDING)
+                            .limit(10)
+                            .stream()
+                        )
+                        msgs = []
+                        for row in rows:
+                            dd = row.to_dict()
+                            u = dd.get('user_message')
+                            a = dd.get('ai_response')
+                            if u: msgs.append(f"User: {u}")
+                            if a: msgs.append(f"Elara: {a}")
+                        context_text = "\n".join(reversed(msgs))
+            except Exception:
+                context_text = ""
+
+            # Try rule-based and scrape fallback
+            resource_from_rules = find_resource_for_query(problem_query, data.get('region', 'GLOBAL'), context_text)
+            response_data = resource_from_rules if resource_from_rules else generate_mock_resource(problem_query)
             
     except Exception as e:
         print(f"Error during Vero's AI summarization: {e}")
