@@ -1,8 +1,12 @@
 # Vero Agent - Resource Provider
 from flask import Blueprint, request, jsonify
 from firebase_admin import firestore
-import requests
-from bs4 import BeautifulSoup
+try:
+    import requests
+    from bs4 import BeautifulSoup
+    SCRAPING_AVAILABLE = True
+except Exception:
+    SCRAPING_AVAILABLE = False
 from datetime import datetime
 
 vero_bp = Blueprint('vero_agent', __name__)
@@ -15,6 +19,8 @@ def set_watsonx_model(model):
 
 def _scrape_first_result(query: str):
     """Very light web scraping: search via DuckDuckGo HTML and fetch first result content."""
+    if not SCRAPING_AVAILABLE:
+        return None
     try:
         q = requests.utils.quote(query)
         search_url = f"https://duckduckgo.com/html/?q={q}"
