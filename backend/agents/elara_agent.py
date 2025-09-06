@@ -28,6 +28,13 @@ def set_watsonx_model(model):
     watsonx_model = model
 
 
+def _get_db_or_none():
+    try:
+        return firestore.client()
+    except Exception:
+        return None
+
+
 def _is_resource_request(text: str) -> bool:
     """Check if user message requests a resource."""
     t = text.lower()
@@ -185,7 +192,7 @@ def _store_vero_response(db, session_id, user_message, vero_response_text, resou
 @elara_bp.route('/elara/greeting', methods=['POST'])
 def get_greeting():
     """Generate personalized greeting."""
-    db = firestore.client()
+    db = _get_db_or_none()
     user_metrics = request.json.get('metrics', {"anxiety": 50, "depression": 50, "stress": 50})
     user_id = request.json.get('userId')
 
@@ -206,11 +213,11 @@ Your welcoming message:
 
     # Resolve or create session FIRST to avoid duplicate parallel session creation
     session_id = None
-    if user_id:
+    if user_id and db:
         session_id = _get_or_create_session(db, user_id, provided_session_id=None)
 
     # If we already have a greeting stored for this session recently, return it (idempotent)
-    if session_id:
+    if session_id and db:
         try:
             recent_docs = (
                 db.collection('user_sessions')
@@ -242,7 +249,7 @@ Your welcoming message:
         ai_response_text = generate_mock_response(greeting_prompt)
 
     # Store greeting once
-    if session_id:
+    if session_id and db:
         try:
             db.collection('user_sessions').document(session_id).collection('chatHistory').add({
                 'user_message': None,
@@ -260,7 +267,7 @@ Your welcoming message:
 @elara_bp.route('/elara/chat', methods=['POST'])
 def handle_chat():
     """Handle chat messages and route to appropriate agents."""
-    db = firestore.client()
+    db = _get_db_or_none()
     data = request.json or {}
     user_id = data.get('userId')
     user_message = data.get('message')
@@ -345,11 +352,11 @@ def handle_chat():
         print(f"Resource-intent detection error: {e}")
 
     # Session handling
-    session_id = _get_or_create_session(db, user_id, provided_session_id)
+    session_id = _get_or_create_session(db, user_id, provided_session_id) if db else None
 
     # Retrieve chat history
     chat_history = []
-    if session_id:
+    if session_id and db:
         try:
             rows = (
                 db.collection('user_sessions').document(session_id)
@@ -414,7 +421,7 @@ def handle_chat():
 
     # Store chat turn
     try:
-        if session_id:
+        if session_id and db:
             db.collection('user_sessions').document(session_id).collection('chatHistory').add({
                 'user_message': user_message,
                 'ai_response': ai_response_text,
@@ -425,7 +432,7 @@ def handle_chat():
 
     # Lightweight heuristic to update metrics sensitivity after supportive replies
     try:
-        if session_id and user_id:
+        if session_id and user_id and db:
             state_ref = db.collection('user_states').document(user_id)
             state_doc = state_ref.get()
             if state_doc.exists:
@@ -481,9 +488,11 @@ def handle_chat():
 @elara_bp.route('/elara/getHistoryList', methods=['POST'])
 def get_history_list():
     """Get list of past chat sessions."""
-    db = firestore.client()
+    db = _get_db_or_none()
     user_id = request.json.get('userId')
     try:
+        if not db:
+            return jsonify([])
         sessions_ref = db.collection('user_sessions').where('userId', '==', user_id).order_by('startTime', direction=firestore.Query.DESCENDING).stream()
         session_list = []
         for doc in sessions_ref:
@@ -507,9 +516,11 @@ def get_history_list():
 @elara_bp.route('/elara/getSession', methods=['POST'])
 def get_session():
     """Get chat history for specific session."""
-    db = firestore.client()
+    db = _get_db_or_none()
     session_id = request.json.get('sessionId')
     try:
+        if not db:
+            return jsonify([])
         history_ref = db.collection('user_sessions').document(session_id).collection('chatHistory').order_by('timestamp').stream()
         chat_history = [{"user": doc.to_dict().get('user_message'), "ai": doc.to_dict().get('ai_response')} for doc in history_ref]
         return jsonify(chat_history)
