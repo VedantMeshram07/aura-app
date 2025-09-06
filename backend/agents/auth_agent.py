@@ -31,7 +31,8 @@ def signup():
         return jsonify({"error": "Missing required fields"}), 400
 
     # Check if user already exists
-    existing_user = db.collection('registered_users').where('email', '==', email).limit(1).get()
+    email_lower = email.lower()
+    existing_user = db.collection('registered_users').where('email_lower', '==', email_lower).limit(1).get()
     if existing_user and len(existing_user) > 0:
         return jsonify({"error": "User with this email already exists"}), 409
 
@@ -44,6 +45,7 @@ def signup():
         "name": name,
         "age": age,
         "email": email,
+        "email_lower": email_lower,
         "password_hash": hashed_password,
         "created_at": firestore.SERVER_TIMESTAMP,
         "region": region
@@ -66,14 +68,14 @@ def signup():
 def login():
     db = firestore.client()
     data = request.json
-    email = data.get('email')
+    email = (data.get('email') or '').strip().lower()
     password = data.get('password')
 
     if not email or not password:
         return jsonify({"error": "Email and password are required"}), 400
 
     # Fetch user
-    query_result = db.collection('registered_users').where('email', '==', email).limit(1).get()
+    query_result = db.collection('registered_users').where('email_lower', '==', email).limit(1).get()
     if not query_result:
         return jsonify({"error": "Invalid credentials"}), 401
 

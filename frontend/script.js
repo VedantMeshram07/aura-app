@@ -10,6 +10,8 @@ let activeBackgroundAgents = new Set();
 let currentTheme = 'light';
 let hasShownGreeting = false;
 let greetingInFlight = false;
+let loginInFlight = false;
+let signupInFlight = false;
 
 // Chat history persistence helpers
 function getChatStorageKey() {
@@ -194,6 +196,7 @@ async function reloadMetrics() {
 // Authentication
 async function login(event) {
   event.preventDefault();
+  if (loginInFlight) return;
   const email = document.getElementById('loginEmail').value.trim();
   const password = document.getElementById('loginPassword').value.trim();
   
@@ -203,10 +206,14 @@ async function login(event) {
   }
   
   try {
+    loginInFlight = true;
+    const form = document.getElementById('login-form');
+    const submitBtn = form ? form.querySelector('button[type="submit"]') : null;
+    if (submitBtn) submitBtn.disabled = true;
     const res = await fetch(`${BACKEND_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ email: email.toLowerCase(), password }),
     });
     
     if (res.ok) {
@@ -221,11 +228,17 @@ async function login(event) {
   } catch (error) {
     console.error('Login error:', error);
     alert('Login failed. Please try again.');
+  } finally {
+    loginInFlight = false;
+    const form = document.getElementById('login-form');
+    const submitBtn = form ? form.querySelector('button[type="submit"]') : null;
+    if (submitBtn) submitBtn.disabled = false;
   }
 }
 
 async function signup(event) {
   event.preventDefault();
+  if (signupInFlight) return;
   const name = document.getElementById('signupName').value.trim();
   const email = document.getElementById('signupEmail').value.trim();
   const password = document.getElementById('signupPassword').value.trim();
@@ -238,6 +251,10 @@ async function signup(event) {
   }
   
   try {
+    signupInFlight = true;
+    const form = document.getElementById('signup-form');
+    const submitBtn = form ? form.querySelector('button[type="submit"]') : null;
+    if (submitBtn) submitBtn.disabled = true;
     const res = await fetch(`${BACKEND_URL}/auth/signup`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -254,6 +271,11 @@ async function signup(event) {
   } catch (error) {
     console.error('Signup error:', error);
     alert('Signup failed. Please try again.');
+  } finally {
+    signupInFlight = false;
+    const form = document.getElementById('signup-form');
+    const submitBtn = form ? form.querySelector('button[type="submit"]') : null;
+    if (submitBtn) submitBtn.disabled = false;
   }
 }
 
