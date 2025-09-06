@@ -31,21 +31,33 @@ DEFAULT_METRICS = {"anxiety": 0, "depression": 0, "stress": 0}
 def signup():
     db = _get_db_or_none()
     data = request.json
+    
+    # Enhanced input validation
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
 
     email = (data.get('email') or '').strip()
     password = data.get('password')
     name = (data.get('name') or '').strip()
     age = data.get('age')
     region = (data.get('region') or 'GLOBAL').strip().upper()
+    
+    print(f"🔍 Signup attempt for email: {email}")
+    print(f"🔍 Using {'Firebase' if db else 'in-memory'} storage")
 
     # Validation
     try:
         age = int(age)
-    except Exception:
-        return jsonify({"error": "Age must be a number"}), 400
+        if age < 6 or age > 120:
+            return jsonify({"error": "Age must be between 6 and 120"}), 400
+    except (ValueError, TypeError):
+        return jsonify({"error": "Age must be a valid number"}), 400
 
     if not all([email, password, name, age, region]):
-        return jsonify({"error": "Missing required fields"}), 400
+        return jsonify({"error": "Missing required fields: email, password, name, age, region"}), 400
+        
+    if len(password) < 6:
+        return jsonify({"error": "Password must be at least 6 characters long"}), 400
 
     # Check if user already exists
     email_lower = email.lower()
@@ -116,43 +128,60 @@ def signup():
 def login():
     db = _get_db_or_none()
     data = request.json
+    
+    # Enhanced input validation
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+        
     raw_email = (data.get('email') or '').strip()
     email = raw_email.lower()
     password = data.get('password')
 
     if not email or not password:
         return jsonify({"error": "Email and password are required"}), 400
+        
+    print(f"🔍 Login attempt for email: {raw_email} (normalized: {email})")
+    print(f"🔍 Using {'Firebase' if db else 'in-memory'} storage")
 
     # Fetch user (prefer email_lower, fallback to legacy 'email' field)
     user_data = None
     user_id = None
     if db:
         try:
+            print(f"🔍 Searching Firebase for user with email_lower: {email}")
             query_result = db.collection('registered_users').where('email_lower', '==', email).limit(1).get()
             if not query_result:
+                print(f"🔍 No user found with email_lower, trying legacy exact match: {raw_email}")
                 # Legacy fallback: try exact email match
                 legacy = db.collection('registered_users').where('email', '==', raw_email).limit(1).get()
                 if not legacy:
+                    print(f"❌ No user found with email: {raw_email}")
                     return jsonify({"error": "Invalid credentials"}), 401
                 user_doc = legacy[0]
+                print(f"✅ Found user via legacy lookup, backfilling email_lower")
                 # Backfill email_lower for future logins
                 try:
                     db.collection('registered_users').document(user_doc.id).update({"email_lower": email})
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"⚠️  Failed to backfill email_lower: {e}")
             else:
                 user_doc = query_result[0]
+                print(f"✅ Found user via email_lower lookup")
             user_data = user_doc.to_dict()
             user_id = user_doc.id
-        except Exception:
+        except Exception as e:
+            print(f"❌ Firebase lookup failed: {e}")
             user_data = None
             user_id = None
     else:
+        print(f"🔍 Searching in-memory storage for user with email: {email}")
         # In-memory lookup
         if email in _MEM_USERS_BY_EMAIL:
             user_id = _MEM_USERS_BY_EMAIL[email]
             user_data = _MEM_USERS_BY_ID.get(user_id)
+            print(f"✅ Found user in memory via email_lower")
         else:
+            print(f"🔍 No user found with email_lower, trying legacy exact match")
             # Legacy exact email match
             for uid, doc in _MEM_USERS_BY_ID.items():
                 if doc.get('email') == raw_email:
@@ -160,13 +189,18 @@ def login():
                     user_data = doc
                     # Backfill email_lower
                     _MEM_USERS_BY_EMAIL[email] = uid
+                    print(f"✅ Found user via legacy lookup, backfilled email_lower")
                     break
             if not user_data:
+                print(f"❌ No user found with email: {raw_email}")
                 return jsonify({"error": "Invalid credentials"}), 401
 
     # Verify password
+    print(f"🔍 Verifying password for user: {user_id}")
     if not pbkdf2_sha256.verify(password, user_data.get('password_hash')):
+        print(f"❌ Password verification failed for user: {user_id}")
         return jsonify({"error": "Invalid credentials"}), 401
+    print(f"✅ Password verified successfully for user: {user_id}")
 
     # Load metrics
     has_recent_screening = False

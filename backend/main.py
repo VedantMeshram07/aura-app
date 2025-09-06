@@ -40,15 +40,21 @@ def initialize_firebase():
         service_account_path = os.path.join(backend_dir, "serviceAccountKey.json")
         
         if not os.path.exists(service_account_path):
-            print("Firebase service account key not found")
+            print("⚠️  Firebase service account key not found at:", service_account_path)
+            print("   Using in-memory storage (data will not persist between restarts)")
+            print("   To enable Firebase:")
+            print("   1. Get your service account key from Firebase Console")
+            print("   2. Save it as 'serviceAccountKey.json' in the backend directory")
+            print("   3. Restart the application")
             return False
         else:
             cred = credentials.Certificate(service_account_path)
             firebase_admin.initialize_app(cred)
-            print("Firebase initialized successfully")
+            print("✅ Firebase initialized successfully")
             return True
     except Exception as e:
-        print(f"Firebase initialization failed: {e}")
+        print(f"❌ Firebase initialization failed: {e}")
+        print("   Falling back to in-memory storage")
         return False
 
 # Initialize Firebase
