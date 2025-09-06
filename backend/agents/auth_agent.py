@@ -124,6 +124,9 @@ def login():
             "metrics": user_metrics,
             "region": user_data.get('region') or "GLOBAL"
         },
+        # Duplicate some fields at top-level for compatibility with older clients/tests
+        "userId": user_id,
+        "name": user_data.get('name'),
         "hasRecentScreening": has_recent_screening
     })
 
