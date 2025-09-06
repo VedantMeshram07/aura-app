@@ -8,6 +8,7 @@ let chatHistory = [];
 let activeAgent = "Elara";
 let activeBackgroundAgents = new Set();
 let currentTheme = 'light';
+let hasShownGreeting = false;
 
 // Agent configurations
 const AGENTS = {
@@ -353,6 +354,7 @@ async function loadChatInterface(isNewSession = false, metrics = null) {
   if (isNewSession) {
     currentSessionId = null;
     chatHistory = [];
+    hasShownGreeting = false;
   }
   
   loadInterface(`<div class="chat-container" id="chat-log">
@@ -363,7 +365,7 @@ async function loadChatInterface(isNewSession = false, metrics = null) {
     <button class="btn btn-primary" onclick="sendMessage()">Send</button>
   </div>`);
   
-  if (isNewSession && metrics) {
+  if (isNewSession && metrics && !hasShownGreeting) {
     try {
       const res = await fetch(`${BACKEND_URL}/elara/greeting`, {
         method: 'POST',
@@ -375,9 +377,11 @@ async function loadChatInterface(isNewSession = false, metrics = null) {
         const data = await res.json();
         currentSessionId = data.sessionId;
         addBubble(data.response, 'elara');
+        hasShownGreeting = true;
       }
     } catch (error) {
       addBubble("Hello! I'm Elara, your AI companion. How are you feeling today?", 'elara');
+      hasShownGreeting = true;
     }
   }
 }
