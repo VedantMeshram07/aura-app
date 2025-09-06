@@ -19,10 +19,18 @@ except ImportError:
     Credentials = None
     WATSONX_AVAILABLE = False
 
-# Agent blueprint imports will be handled inside create_app per-agent to avoid total failure
-elara_wx_setter = None
-vero_wx_setter = None
-run_analysis = None
+# Agent blueprint imports
+try:
+    from agents.auth_agent import auth_bp
+    from agents.kai_agent import kai_bp
+    from agents.elara_agent import elara_bp, set_watsonx_model as set_elara_model
+    from agents.vero_agent import vero_bp, set_watsonx_model as set_vero_model
+    from agents.aegis_agent import aegis_bp
+    from agents.orion_analyzer import run_analysis
+    from agents.session_agent import session_bp
+    AGENTS_AVAILABLE = True
+except ImportError:
+    AGENTS_AVAILABLE = False
 
 # Initialize Firebase globally
 def initialize_firebase():
@@ -85,14 +93,15 @@ def create_app():
                         params=generate_params
                     )
                     
-                    try:
-                        # Set models if agent setters are available
-                        if elara_wx_setter:
-                            elara_wx_setter(model)
-                        if vero_wx_setter:
-                            vero_wx_setter(model)
-                    except Exception as e:
-                        print(f"Error setting Watsonx model on agents: {e}")
+                    if AGENTS_AVAILABLE:
+                        try:
+                            set_elara_model(model)
+                        except Exception as e:
+                            print(f"Could not set Elara model: {e}")
+                        try:
+                            set_vero_model(model)
+                        except Exception as e:
+                            print(f"Could not set Vero model: {e}")
                     app.watsonx_model = model
                 except Exception as e:
                     print(f"Watsonx.ai initialization failed: {e}")
@@ -118,44 +127,17 @@ def create_app():
     def serve_index():
         return render_template('index.html')
 
-    # Register blueprints individually so one failure doesn't block others
-    try:
-        from agents.auth_agent import auth_bp as _auth_bp
-        app.register_blueprint(_auth_bp)
-    except Exception as e:
-        print(f"Auth blueprint unavailable: {e}")
-
-    try:
-        from agents.kai_agent import kai_bp as _kai_bp
-        app.register_blueprint(_kai_bp)
-    except Exception as e:
-        print(f"Kai blueprint unavailable: {e}")
-
-    try:
-        from agents.elara_agent import elara_bp as _elara_bp, set_watsonx_model as _set_elara_model
-        app.register_blueprint(_elara_bp)
-        globals()['elara_wx_setter'] = _set_elara_model
-    except Exception as e:
-        print(f"Elara blueprint unavailable: {e}")
-
-    try:
-        from agents.vero_agent import vero_bp as _vero_bp, set_watsonx_model as _set_vero_model
-        app.register_blueprint(_vero_bp)
-        globals()['vero_wx_setter'] = _set_vero_model
-    except Exception as e:
-        print(f"Vero blueprint unavailable: {e}")
-
-    try:
-        from agents.aegis_agent import aegis_bp as _aegis_bp
-        app.register_blueprint(_aegis_bp)
-    except Exception as e:
-        print(f"Aegis blueprint unavailable: {e}")
-
-    try:
-        from agents.session_agent import session_bp as _session_bp
-        app.register_blueprint(_session_bp)
-    except Exception as e:
-        print(f"Session blueprint unavailable: {e}")
+    # Register blueprints
+    if AGENTS_AVAILABLE:
+        try:
+            app.register_blueprint(auth_bp)
+            app.register_blueprint(kai_bp)
+            app.register_blueprint(elara_bp)
+            app.register_blueprint(vero_bp)
+            app.register_blueprint(aegis_bp)
+            app.register_blueprint(session_bp)
+        except Exception as e:
+            print(f"Error registering blueprints: {e}")
 
     return app
 
