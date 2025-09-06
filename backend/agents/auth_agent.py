@@ -68,18 +68,28 @@ def signup():
 def login():
     db = firestore.client()
     data = request.json
-    email = (data.get('email') or '').strip().lower()
+    raw_email = (data.get('email') or '').strip()
+    email = raw_email.lower()
     password = data.get('password')
 
     if not email or not password:
         return jsonify({"error": "Email and password are required"}), 400
 
-    # Fetch user
+    # Fetch user (prefer email_lower, fallback to legacy 'email' field)
     query_result = db.collection('registered_users').where('email_lower', '==', email).limit(1).get()
     if not query_result:
-        return jsonify({"error": "Invalid credentials"}), 401
-
-    user_doc = query_result[0]
+        # Legacy fallback: try exact email match
+        legacy = db.collection('registered_users').where('email', '==', raw_email).limit(1).get()
+        if not legacy:
+            return jsonify({"error": "Invalid credentials"}), 401
+        user_doc = legacy[0]
+        # Backfill email_lower for future logins
+        try:
+            db.collection('registered_users').document(user_doc.id).update({"email_lower": email})
+        except Exception:
+            pass
+    else:
+        user_doc = query_result[0]
     user_data = user_doc.to_dict()
 
     # Verify password
